@@ -6,6 +6,8 @@ library(ggplot2)
 library(Seurat)
 library(utils)
 library(dplyr)
+library(data.table)
+
 
 ########### convert ENSMBL genes to gene names #############################
 
@@ -39,9 +41,13 @@ dgeconts2csv = function(ensmbl_filepath="X:\\roy\\resources\\Ensemble\\ensemble_
 
 ########### Mat-norm ##########################
 matnorm = function(df) {
-  sum_col = unname(colSums(df))
-  normilized_df =  as.data.frame(t(t(df) / sum_col))
-  return (normilized_df)
+  ind = unlist(lapply(df, is.numeric), use.names = FALSE)  
+  numeric_df = df[,ind]
+  sum_col = unname(colSums(numeric_df,na.rm = T))
+  normilized_df =  as.data.frame(t(t(numeric_df) / sum_col))
+  final_df = data.frame(df[,!ind],normilized_df)
+  colnames(final_df) = c(colnames(df)[!ind],colnames(df)[ind])
+  return (final_df)
 }
 
 ########### Pseudobulk #######################
@@ -172,16 +178,35 @@ plot_Enricher <- function(enrich.hallmark, qval_color="red",title="") {
     guides(fill=guide_legend(title="-log(Qval)",reverse=T))
 }
 
-GSEA_function <- function(gene_list,log2fc_ratio, geneset="hallmark",organism="Mus musculus",score_type="std", qval_threshold=0.05, nperm=1000) {
+GSEA_function <- function(gene_list,log2fc_ratio, geneset="hallmark",organism="Mus musculus",score_type="std", qval_threshold=1, nperm=1000) {
+  # https://bioinformatics-core-shared-training.github.io/RNAseq_May_2020_remote/html/06_Gene_set_testing.html
+  # https://bioconductor.org/packages/devel/bioc/manuals/fgsea/man/fgsea.pdf 
+  # 
+  #' get enriched pathways based on a list of genes
+  #' 
+  #' @param gene_list a vector containing genes that are significanly changed between conditions
+  #' @param log2fc_ratio a vector of scores / FoldChange / Log2 Fold change / ranks et.
+  #' @param geneset either "hallmark" or "KEGG", for more check ?msigdbr or go to: https://www.gsea-msigdb.org/gsea/msigdb/human/genesets.jsp?collection=CP:WIKIPATHWAYS
+  #' Also can be a vector of category and subcategory, such as c("C2","KEGG"). 
+  #' or a dataframe of two columns - first is the genesets, second is the gene
+  #' @param organism either "Mus musculus" or "Homo sapiens"
+  #' @return Returns a dataframe with all relevent results. enriched in  gene set
   if (geneset=="hallmark"){
     hallmark = msigdbr(species=organism,category="H" )
     GENESET = "HALLMARK_"
-  }
-  else if (geneset=="KEGG"){
+  } else if (geneset=="KEGG"){
     hallmark = msigdbr(species=organism,category="C2", subcategory = "KEGG" )
     GENESET = "KEGG_"
+  } else if (class(geneset)=="data.frame") {
+    hallmark = geneset
+    colnames(hallmark) = c("gs_name", "gene_symbol")
+    GENESET = "customGeneset_"
+  } else if (length(geneset) == 2){
+    hallmark = msigdbr(species=organism,category=geneset[1], subcategory = geneset[2] )
+    GENESET = paste(geneset[2],"_",sep="")
+  } else {
+    stop ("geneset problematic")
   }
-  else {stop ("geneset need to be hallmark or KEGG")}
   names(log2fc_ratio) = gene_list
   hallmark.genes = hallmark[,c("gs_name", "gene_symbol")]
   
@@ -208,7 +233,8 @@ GSEA_function <- function(gene_list,log2fc_ratio, geneset="hallmark",organism="M
   enrich.hallmark$direction="upregulated"
   enrich.hallmark$direction[enrich.hallmark$NES<0] = "downregulated"
   enrich.hallmark$gene_ratio = enrich.hallmark$num_of_genes/enrich.hallmark$size
-  return(enrich.hallmark)
+  return(list(GSEA=enrich.hallmark,pathways=hallmark.list))
+  
 }
 
 plot_GSEA_bar = function(enrich.hallmark,title="GSEA") {
@@ -235,10 +261,61 @@ plot_GSEA_dotplot = function(enrich.hallmark,title="GSEA") {
     theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 }
 
+export_GSEA_csv = function(GSEA,output_file) {
+  temp = GSEA
+  temp$genes = ""
+  for (i in 1:nrow(temp)){
+    temp$genes[i] = paste(unlist(temp$leadingEdge[i]),collapse = '_')
+  }
+  temp$leadingEdge = NULL
+  write.csv(temp,output_file)
+  return(temp)
+}
+
 export_GSEA_json = function(GSEA, output_file) {
+  library(jsonlite)
   # output file is path+name
   sink(file =  output_file)
   l = unname(split(GSEA, seq(nrow(GSEA)))) # convert data frame rows to list
   toJSON(l, pretty=T, auto_unbox = T) # convert to JSON
   sink(file = NULL)
 }
+
+########### beautiful pie charts ##################
+export_for_pie = function(genes, values, path="") {
+  #' gets genes and values, transormes it into format accaptable by:
+  #' https://bionic-vis.biologie.uni-greifswald.de/ 
+  #' 
+  #' @param genes a vector containing genes 
+  #' @param values any value represent the size/portion of each gene
+  #' @param path if provided - saves the data into file
+  #' 
+  translation = read.csv("X:\\roy\\resources\\Ensemble\\refseq_peptide_genes.csv")
+  df = data.frame(genes,values)
+  colnames(df) = c("external_gene_name","value")
+  df_merged = merge(df,translation[,c("external_gene_name","refseq_peptide")],by="external_gene_name")
+  df_merged = df_merged[df_merged$refseq_peptide != "",]
+  
+  dt = data.table(df_merged)
+  dt = unique(dt, by = "external_gene_name")
+  dt$refseq_peptide = gsub("NP_","",dt$refseq_peptide)
+  dt$external_gene_name=NULL
+  dt = as.data.frame(dt)
+  dt = dt[,c(2,1)]
+  
+  if (path != ""){write.table(dt, path, sep="\t",row.names=F,col.names=F, quote = FALSE)}
+  return(dt)
+}
+
+########### General R ############################
+remove_duplicated_rows = function(df, column_containing_duplicates) {
+  dt = data.table(df)
+  dt = unique(dt, by = column_containing_duplicates)
+  return (as.data.frame(dt))
+}
+
+averege_duplicated_rows = function(df, column_containing_duplicates) {
+  return (aggregate( . ~ eval(parse(text=column_containing_duplicates)), df, mean, na.rm=T, na.action=NULL))
+}
+
+
