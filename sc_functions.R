@@ -7,7 +7,13 @@ library(Seurat)
 library(utils)
 library(dplyr)
 library(data.table)
+library(readxl)
+library(ggrepel)
+library(gridExtra)
+library(plyr)
 
+
+# to import it, add: source("X:\\roy\\resources\\sc_functions.R")
 
 ########### convert ENSMBL genes to gene names #############################
 
@@ -285,6 +291,7 @@ export_GSEA_json = function(GSEA, output_file) {
   sink(file = NULL)
 }
 
+
 ########### beautiful pie charts ##################
 export_for_pie = function(genes, values, path="") {
   #' gets genes and values, transormes it into format accaptable by:
@@ -315,6 +322,15 @@ export_for_pie = function(genes, values, path="") {
 }
 
 ########### General R ############################
+time_it = function(expr) {
+  start_time = Sys.time()  
+  result = eval(expr)  
+  end_time = Sys.time()  
+  execution_time = end_time - start_time  
+  cat("Execution Time:", execution_time, "\n")  
+  return(result)  
+}
+
 remove_duplicated_rows = function(df, column_containing_duplicates) {
   dt = data.table(df)
   dt = unique(dt, by = column_containing_duplicates)
@@ -325,28 +341,41 @@ averege_duplicated_rows = function(df, column_containing_duplicates) {
   return (aggregate( . ~ eval(parse(text=column_containing_duplicates)), df, mean, na.rm=T, na.action=NULL))
 }
 
-max_duplicated_rows = function(df, column_containing_duplicates) {
-  new_df = data.frame(matrix(NA, nrow=0, ncol=ncol(df)))
-  colnames(new_df) = colnames(df)
-  for(i in 1:nrow(df)){
-    gene = df[i,column_containing_duplicates]
-    if (!(gene %in% new_df[,column_containing_duplicates])){
-      new_df[nrow(new_df) + 1,] = df[i,]
-      rownames(new_df)[nrow(new_df)] = gene
-      next
-    }
-    cur_sum = sum(new_df[gene,colnames(new_df) != column_containing_duplicates])
-    new_sum = sum(df[i,colnames(df) != column_containing_duplicates])
-    if (new_sum > cur_sum){
-      new_df[gene,] = df[i,]
-    }
-  }
-  return(new_df)
+max_duplicated_rows = function(df, column_name) {
+  df$medians = apply(df[sapply(df, is.numeric)],1,median)
+  df = df[order(df$medians, decreasing = TRUE), ]
+  res = df[!duplicated(df[,column_name]), ]
+  res$medians = NULL
+  return (res)
 }
 
 ########### intestinal plots and markers ############################
 
-plot_marker = function(expression_mat, genes, celltypes=NA) {
+#load apicome data:
+load_human_apicome = function() {
+  if (!exists("human_apicome")){
+    human_apicome <<- read.csv("X:\\roy\\apicome\\analysis\\LCM_human\\outputs_june23\\both_batches\\filtered_protein_coding/medians.csv",row.names=1)
+    # translation_h = read.csv("X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv")
+    # translation_h = translation_h[!duplicated(translation_h$external_gene_name), ]
+    # rownames(translation_h) = translation_h$external_gene_name
+    # translation_h <<- translation_h
+  } else {return(human_apicome)}
+}
+
+load_mouse_apicome = function() {
+  if (!exists("mouse_apicome")){
+    mouse_apicome = read.csv("X:\\roy\\apicome\\analysis\\LCM_bulk\\outputs_apr23/non_filtered/medians.csv",row.names=1)
+    mouse_apicome$gene = toupper(mouse_apicome$gene)
+    # translation = read.csv("X:\\roy\\resources\\Ensemble\\ensemble_entrez_geneId_conversion.csv")
+    # translation = translation[!duplicated(translation$external_gene_name), ]
+    # rownames(translation) <<- translation$external_gene_name
+    # translation_ <<- translation
+    mouse_apicome <<- mouse_apicome
+  } else {return(mouse_apicome)}
+}
+
+
+plot_roy_marker = function(expression_mat, genes, celltypes=NA) {
   #' creates barplot of selected genes based on signature matrix
   #' 
   #' @param expression_mat signature matrix (rows are genes, columns are celltypes)
@@ -373,22 +402,32 @@ plot_marker = function(expression_mat, genes, celltypes=NA) {
   return (plots)
 }
 
-plot_inna = function(genes, organism="mouse",celltypes=NA){
+# load Innas expression matrix (mouse intestine) and Yotams human intestines expression matrix:
+load_human_expression = function(){
+  if (!exists("expression_human")){
+  expression_human <<- read.csv("X:\\roy\\apicome\\visium_export_from_yotam\\P13cell_type_signature_matrix.csv",row.names=1)
+  # expression_human = expression_human[!grepl("^AC\\d|orf|^RP[SL]|^AP\\d|AL\\d|^LINC",rownames(expression_human)),]
+  } else {return(expression_human)}
+}
+
+load_mouse_expression = function(){
+  if (!exists("expression_mouse")){
+    expression_mouse = read.csv("X:\\roy\\resources\\datasets\\innas_data.csv",row.names=1)
+    rownames(expression_mouse) = toupper(rownames(expression_mouse))
+    expression_mouse <<- expression_mouse
+  } else {return(expression_mouse)}
+}
+
+plot_roy_inna = function(genes, organism="mouse",celltypes=NA){
   #' plots expression in celltypes
   #' #' @param genes gene or genes to plot
   #' #' @param organism "human" or "mouse".
   #' #' @param celltypes vector of gene celltypes which would be highlighted by color
   genes = toupper(genes)
-  if (organism=="human") {filename = "X:\\roy\\apicome\\visium_export_from_yotam\\P13cell_type_signature_matrix.csv"}
-  if (organism=="mouse") {filename = "X:\\roy\\resources\\datasets\\innas_data.csv"}
-  expression = read.csv(filename,row.names=1)
-  # expression = expression[!grepl("^AC\\d|orf|^RP[SL]|^AP\\d|AL\\d|^LINC",rownames(expression)),]
-  # expression = expression[!grepl("^Gm\\d|^BC|^Rp[sl]|Rik|^AI\\d|^AA",rownames(expression)),]
-  rownames(expression) = toupper(rownames(expression))
+  if (organism=="human") {expression = load_human_expression()}
+  if (organism=="mouse") {expression = load_mouse_expression()}
   barplots = plot_marker(expression, genes,celltypes=celltypes)
-  
   x = sapply(barplots, function(p, add){return(p+ggtitle(paste(p$lebels$title," (",organism,")",sep="")))}, add=organism)
-  
   for (i in 1:length(barplots)){barplots[[i]] = barplots[[i]] + ggtitle(paste(barplots[[i]]$labels$title," (",organism,")",sep=""))}
   return(barplots)
 }
@@ -404,15 +443,10 @@ find_markers = function(celltypes=NA,organism="human",celltype_name=NA,RATIO_THR
   #' @param EXP_THRESH float. ratio threshold, above which markers will be returned.
   #' @param barplots bool. return a list of barplots for each marker?
   #' @return Returns vector of markers, expression matrix of the markers and plots
-  if (organism=="human") {
-    filename = "X:\\roy\\apicome\\visium_export_from_yotam\\P13cell_type_signature_matrix.csv"}
-  if (organism=="mouse") {filename = "X:\\roy\\resources\\datasets\\innas_data.csv"}
-  expression = read.csv(filename,row.names=1)
+  if (organism=="human") {expression = load_human_expression()}
+  if (organism=="mouse") {expression = load_mouse_expression()}
   if (typeof(celltypes)=="logical") {return(colnames(expression))}
   if (is.na(celltype_name)){celltype_name = celltypes[1]}
-  
-  expression = expression[!grepl("^AC\\d|orf|^RP[SL]|^AP\\d|AL\\d|^LINC",rownames(expression)),]
-  expression = expression[!grepl("^Gm\\d|^BC|^Rp[sl]|Rik|^AI\\d|^AA",rownames(expression)),]
   
   chosen_cell = data.frame(expression[,celltypes])
   rownames(chosen_cell) = rownames(expression)
@@ -452,96 +486,201 @@ find_markers = function(celltypes=NA,organism="human",celltype_name=NA,RATIO_THR
   return (list(markers=celltype_markers,markers_tbl=res,celltypes=celltypes,expression_mat=expression,plot=p, barplots=barplots))
 }
 
-plot_human_sections = function(gene){
-  #' plots expression along the intestinal segments in human data from Rachel Zwick data in mouse or human
+
+# load human intestinal sections data:
+load_segments_human = function(){
+  if (!exists("human_sections")){
+    path = "X:\\Shalevi\\Rachel_Zwick"
+    files = c("Enteroendocrine cells.xlsx","Goblet cells.xlsx","Tuft cells.xlsx","Paneth cells.xlsx","Crypt cells.xlsx","Villus cells.xlsx")
+    for(i in 1:length(files)){
+      cur_path = paste(path,files[i],sep="/")
+      name = sub(" cells.xlsx","",files[i])
+      d = read_excel(cur_path)
+      d = d[1:6]
+      d_long = pivot_longer(d,cols=colnames(d[2:6]),names_to="section",values_to=name)
+      if (i == 1){
+        human_sections = d_long
+      } else {human_sections[,name] = d_long[,name]}
+    }
+    human_sections$section = as.integer(gsub("mean ","",human_sections$section))
+    colnames(human_sections)[colnames(human_sections)=="Gene name"] = "gene"
+    human_sections <<- human_sections
+  } else {return(human_sections)}
+}
+
+
+# load mouse intestinal sections data:
+load_segments_mouse = function(){
+  if (!exists("mouse_sections")){
+    path = "X:\\Shalevi\\Rachel_Zwick/mouse_human_comparison"
+    files = c("Mouse Enteroendocrine cells","Mouse Goblet cells","Mouse Tuft cells","Mouse Crypt cells","Mouse Villus cells")
+    for(i in 1:length(files)){
+      cur_path = paste(path,files[i],sep="/")
+      name = sub(" cells","",files[i])
+      name = sub("Mouse ","",name)
+      d = read.table(cur_path,sep="\t",header=T)
+      d = d[1:6]
+      d_long = pivot_longer(d,cols=colnames(d[2:6]),names_to="section",values_to=name)
+      if (i == 1){
+        mouse_sections = d_long
+      } else {mouse_sections[,name] = d_long[,name]}
+    }
+    mouse_sections$section = as.integer(gsub("mean.segment.","",mouse_sections$section))
+    mouse_sections$gene = toupper(mouse_sections$gene)
+    mouse_sections <<- mouse_sections
+  } else {return(mouse_sections)}
+}
+plot_roy_intestinal_sections = function(gene, organism="mouse"){
+  #' plots expression along the intestinal segments in human data from Rachel Zwick data
   #' @param gene string, gene to plot
   gene = toupper(gene)
-  path = "X:\\Shalevi\\Rachel_Zwick"
-  files = c("Enteroendocrine cells.xlsx",
-            "Goblet cells.xlsx",
-            "Tuft cells.xlsx",
-            "Paneth cells.xlsx",
-            "Crypt cells.xlsx",
-            "Villus cells.xlsx")
-  
-  for(i in 1:length(files)){
-    cur_path = paste(path,files[i],sep="/")
-    name = sub(" cells.xlsx","",files[i])
-    d = read_excel(cur_path)
-    d = d[1:6]
-    d_long = pivot_longer(d,cols=colnames(d[2:6]),names_to="section",values_to=name)
-    if (i == 1){
-      sections = d_long
-    } else {
-      sections[,name] = d_long[,name]
+  if(organism=="mouse"){
+    sections = load_segments_mouse()
+    colors = c("purple","lightblue","orange","blue","red")    
     }
-  }
-  sections$section = as.integer(gsub("mean ","",sections$section))
-  plot = sections[sections["Gene name"] == gene,]
+  if (organism=="human"){
+    sections = load_segments_human()
+    colors = c("purple","lightblue","orange","darkgreen","blue","red")
+    }
+  plot = sections[sections["gene"] == gene,]
   plot = pivot_longer(plot,colnames(plot)[3:ncol(plot)], names_to = "celltype", values_to = "expression")
   ggplot(data=plot,aes(x=section,y=expression,color=celltype)) +
     geom_line(size=2) +
     theme_bw() + theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
-    scale_color_manual(values=c("purple","lightblue","orange","darkgreen","blue","red")) +
+    scale_color_manual(values=colors) +
     theme(legend.position="right") + 
     # theme(legend.position=c(0.77,0.9),legend.direction="horizontal",legend.title=element_blank()) +
-    ggtitle("intestine axis") + xlab("") + ylab("")
+    ggtitle(paste("intestine axis",organism,sep=" - ")) + xlab("") + ylab("")
 }
 
-plot_tip_base = function(gene,organism="mouse"){
-  #' plots tip/base expression in mouse or human
-  #' @param gene string, gene to plot
-  #' @param organism "human" or "mouse".
+
+# load Yotams Visium data
+load_human_visium = function(){
+  if (!exists("human_visium_zonation")){
+    human_visium_zonation = read.csv("X:\\roy\\apicome\\visium_export_from_yotam\\Supplementary Table XX zonation.csv")
+    human_visium_zonation = human_visium_zonation[grepl("_median|gene_name",colnames(human_visium_zonation))]
+    colnames(human_visium_zonation) = gsub("_median","",colnames(human_visium_zonation))
+    colnames(human_visium_zonation)[colnames(human_visium_zonation)=="gene_name"] = "gene"
+    human_visium_zonation <<- human_visium_zonation[,!(colnames(human_visium_zonation) %in% c("MusMucosa","SubMucosa"))]
+  } else {return(human_visium_zonation)}
+}
+
+plot_roy_zonation = function(gene,organism="mouse"){
   gene = toupper(gene)
   if(organism=="mouse"){
-    apicome = read.csv("X:\\roy\\apicome\\analysis\\LCM_bulk\\outputs_apr23\\non_filtered/medians.csv")
-  }
+    expression = load_mouse_expression()
+    zonation = expression[,grepl("nterocyte",colnames(expression))]
+    colnames(zonation) = gsub("enterocyte_","",colnames(zonation))
+    plot = zonation[gene,]
+    plot = pivot_longer(plot,colnames(plot), names_to="villus_zone", values_to="expression")
+    }
   if (organism=="human"){
-    apicome = read.csv("X:\\roy\\apicome\\analysis\\LCM_human\\outputs_apr23\\non_filtered/medians.csv")
-  }
-  apicome$X=NULL
-  apicome$gene = toupper(apicome$gene)
-  apicome$tip = (apicome$apical_tip+apicome$basal_tip)/2
-  apicome$base = (apicome$basal_base+apicome$basal_base)/2
+    zonation = load_human_visium()
+    plot = zonation[zonation$gene==gene,]
+    plot = pivot_longer(plot,colnames(plot)[2:ncol(plot)], names_to="villus_zone", values_to="expression")
+    }
   
-  plot = apicome[apicome$gene %in% gene,c("gene","tip","base")]
-  plot = pivot_longer(plot,colnames(plot)[2:3], names_to = "villus_zone", values_to = "expression")
   ggplot(data=plot,aes(x=villus_zone,y=expression)) +
-    geom_bar(stat="identity",fill=c("pink","blue"),color="black",size=1) +
+    geom_bar(stat="identity",fill="lightgreen",color="black",size=1) +
     theme_bw() + theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
-    xlab("") + ggtitle("Villus zone") + ylab("")
+    xlab("") + ggtitle(paste("Villus zone - ",gene,sep="")) + ylab("")
+  
 }
 
-plot_apicome = function(gene,organism="mouse"){
-  #' plots apicome in mouse or human
-  #' @param gene string, gene to plot
-  #' @param organism "human" or "mouse".
+plot_roy_apicome = function(gene,organism="mouse",exp_thresh=1e-8){
   gene = toupper(gene)
-  if(organism=="mouse"){
-    apicome = read.csv("X:\\roy\\apicome\\analysis\\LCM_bulk\\outputs_apr23\\non_filtered/medians.csv")}
-  if (organism=="human"){
-    apicome = read.csv("X:\\roy\\apicome\\analysis\\LCM_human\\outputs_apr23\\non_filtered/medians.csv")}
-  apicome$X=NULL
-  apicome$gene = toupper(apicome$gene)
-  apicome$apical = (apicome$apical_tip+apicome$apical_base)/2
-  apicome$basal = (apicome$basal_tip+apicome$basal_base)/2
-  plot = apicome[apicome$gene %in% gene,c("gene","apical","basal")]
-  plot = pivot_longer(plot,colnames(plot)[2:3], names_to = "apicome", values_to = "expression")
-  ggplot(data=plot,aes(x=apicome,y=expression)) +
-    geom_bar(stat="identity",fill=c("lightgreen","yellow"),color="black",size=1) +
-    theme_bw() + theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
-    xlab("") + ggtitle("Apicome") + ylab("")
+  if(organism=="mouse"){apicome = load_mouse_apicome()}
+  if (organism=="human"){apicome = load_human_apicome()}
+  plot = apicome[apicome$expression_min >= exp_thresh,]
+  plot$signif = "no"
+  plot$signif[plot$gene == gene] = "yes"
+  p = ggplot(plot, aes(tip_a_b, base_a_b, color=signif)) +
+    geom_point(aes(alpha=signif)) +
+    geom_text_repel(data=plot[plot$signif != "no",],
+                    aes(tip_a_b, base_a_b,label=gene),max.overlaps = 30, size=2) +
+    ggtitle(paste("Apical/Basal score - ",gene,sep="")) +
+    theme_bw() +
+    theme(axis.line = element_line(),panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+    xlab("Tip of villus log2(apical/basal)") + ylab("Base villus log2(apical/basal)")+
+    scale_color_manual(values = c("black","red")) +
+    theme(legend.position="none") + 
+    geom_hline(yintercept=0, linetype="dashed",alpha = 0.3)+
+    geom_vline(xintercept=0, linetype="dashed",alpha = 0.3)
+  return(p)
 }
 
-plot_intestines = function(gene,organism="mouse"){
+plot_roy_intestines = function(gene,organism="mouse"){
   #' plots apicome, villus axis, intestinal axis and expression
   #' @param gene string, gene to plot
   #' @param organism "human" or "mouse".
-  p1 = plot_inna(gene, organism=organism)
-  p2 = plot_human_sections(gene)
-  p3 = plot_tip_base(gene,organism=organism)
+  p1 = plot_inna(gene,organism=organism)
+  p2 = plot_intestinal_sections(gene,organism=organism)
+  p3 = plot_zonation(gene,organism=organism)
   p4 = plot_apicome(gene,organism=organism)
   p = ggarrange(p1[[1]],ggarrange(p2,p3,p4, nrow = 3),ncol = 2) 
   return(p)
 }
 
+plot_roy_apicome_intestines = function(human_gene,mouse_gene=NA) {
+  #' plots the expression in mouse and human intestines, and the apicome log2(a/b) expression
+  #' @param human_gene gene to plot
+  #' @param mouse_gene in case human and mouse genes are different, put the mouse here
+  if (typeof(mouse_gene)=="logical") {mouse_gene=human_gene}
+  mouse_gene = toupper(mouse_gene)
+  human_gene = toupper(human_gene)
+  p1 = plot_inna(mouse_gene,"mouse",celltypes=c("enterocyte_V1","enterocyte_V2","enterocyte_V3","enterocyte_V4","enterocyte_V5","enterocyte_V6"))
+  p2 = plot_inna(human_gene,"human",celltypes="Enterocyte_Epi")
+  p3 = plot_apicome(mouse_gene,organism="mouse") + ggtitle("mouse")
+  p4 = plot_apicome(human_gene,organism="human") + ggtitle("human")
+  plot = grid.arrange(p1[[1]], grid.arrange(p3, p4, nrow=2),p2[[1]],ncol=3,widths=c(4, 2, 4))
+  return(invisible(plot))
+}
+
+
+########### Human protein atlas ############################
+
+load_translation_human = function(){
+  if (!exists("translation_human")){
+    translation_human = read.csv("X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv")
+    translation_human = translation_human[!duplicated(translation_human$external_gene_name),c("ensembl_gene_id","external_gene_name")]
+    translation_human <<- translation_human
+  } else {return(translation_human)}
+}
+
+human_atlas_image_download = function(gene_name, dir_output,tissue="Small intestine",number_of_images=3){
+  library(HPAanalyze)
+  translation_human = load_translation_human()
+  gene = translation_human$ensembl_gene_id[translation_human$external_gene_name==gene_name]
+  
+  gene_xml = hpaXmlGet(gene)
+  antibody = hpaXmlAntibody(gene_xml)
+  gene_exp = hpaXmlTissueExpr(gene_xml)
+  if(length(gene_exp)==0) return()
+  all_images = data.frame()
+  
+  for (i in 1:length(gene_exp)){
+    cur_ab = gene_exp[[i]]
+    cur_ab_1 = cur_ab[cur_ab$tissueDescription1 == "Normal tissue, NOS" &
+                        cur_ab$tissueDescription2 == "Small intestine" &
+                        (cur_ab$intensity != "Negative" | is.na(cur_ab$intensity)),]
+    cur_ab_1 = cur_ab_1[rowSums(is.na(cur_ab_1)) < ncol(cur_ab_1), ]
+    
+    if(nrow(cur_ab_1)==0){cur_ab_1 = cur_ab[cur_ab$tissueDescription2 == "Small intestine" &
+                                              (cur_ab$intensity != "Negative" | is.na(cur_ab$intensity)),]}
+    if (nrow(cur_ab_1) > number_of_images){
+      cur_ab_1 = sample_n(cur_ab_1,number_of_images)
+    }
+    if(i==1) {
+      all_images = cur_ab_1
+    } else {all_images = rbind.fill(all_images,cur_ab_1)} 
+  }
+  all_images = all_images[rowSums(is.na(all_images)) < ncol(all_images), ]
+  if (nrow(all_images)>0){
+    path = paste0(dir_output,"/",gene_name)
+    if (!dir.exists(path)){dir.create(path)} 
+    for (i in 1:nrow(all_images)) {
+      image_name = paste0(path,"/",gene_name,"_",all_images$tissueDescription2[i],"_",i,".jpg")
+      download.file(all_images$imageUrl[i],destfile=image_name,mode="wb")
+    }
+  }
+}
