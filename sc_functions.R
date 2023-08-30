@@ -1,15 +1,6 @@
 library(tidyverse)
-library(msigdbr)
-library(clusterProfiler)
-library(fgsea)
-library(ggplot2)
-library(Seurat)
 library(utils)
 library(dplyr)
-library(data.table)
-library(readxl)
-library(ggrepel)
-library(gridExtra)
 library(plyr)
 
 
@@ -56,7 +47,7 @@ matnorm = function(df) {
   return (final_df)
 }
 
-########### Pseudobulk #######################
+########### Seurat #######################
 sc2pseudobulk = function(seurat_object, clusters ="seurat_clusters" ,assay="RNA") {
   #' get mat-norm (RC normilized) table of the means of each cluster
   #' 
@@ -64,6 +55,8 @@ sc2pseudobulk = function(seurat_object, clusters ="seurat_clusters" ,assay="RNA"
   #' @param clusters name of seurat metadata that contains the cluster identity
   #' @param assay what assay to use (example: "RNA")
   #' @return Returns a dataframe with mat-norm (RC normilized) table of the means of each cluster
+  library(Seurat)
+  
   df = as.data.frame(AverageExpression(seurat_object, group.by=clusters),assays=assay,slot="counts")
   sum_col = unname(colSums(df))
   normilized_df =  as.data.frame(t(t(df) / sum_col))
@@ -72,7 +65,6 @@ sc2pseudobulk = function(seurat_object, clusters ="seurat_clusters" ,assay="RNA"
   return (normilized_df)
 }
 
-########### DGE + volcano plot ###############
 wilcox = function(row, seurat_meta, ident, celltype1, celltype2){
   w = wilcox.test(row[seurat_meta[[ident]]==celltype1], row[seurat_meta[[ident]]==celltype2], alternative="two.sided")
   p_val = w$p.value
@@ -81,6 +73,8 @@ wilcox = function(row, seurat_meta, ident, celltype1, celltype2){
 
 DGE_seurat = function(seurat_object,celltype1,celltype2,pseudobulk,outpath=NA,ident="cluster",Thresh_GSEA=10^-4){
   # celltype2 is the control
+  library(Seurat)
+  
   Idents(seurat_object) = seurat_object[[ident]]
   seurat_object = subset(seurat_object, idents=c(celltype1,celltype2))
   message(paste("DGE: ",celltype1,"_",celltype2,"\n",sep=""))
@@ -111,6 +105,9 @@ DGE_seurat = function(seurat_object,celltype1,celltype2,pseudobulk,outpath=NA,id
 }
 
 volcano_dge = function(dge, group1, group2, l2fc_threshold_up = 2, l2fc_threshold_down = -2, alpha=0.001,exp_thresh=10^-7, title="",ylimit=320) {
+  # input dge is the output of DGE_seurat()
+  library(ggrepel)
+  library(ggplot2)
   dge = dge[dge$max_expression>exp_thresh,]
   dge$log10expression = log(dge$max_expression,10)
   dge$gene = rownames(dge)
@@ -132,15 +129,61 @@ volcano_dge = function(dge, group1, group2, l2fc_threshold_up = 2, l2fc_threshol
   return (plot)
 }
 
+VlnPlot1 = function(seuratObj, gene, shape="line", funct=mean,color="black",colors=NULL){
+  #' plots a modified violin (with mean/median and transparent points)
+  #' shape - "line" or "dot"
+  #' colors = vector of colors for the violin
+  library(Seurat)
+  if (shape == "line") {size=25
+  shape=95}
+  if (shape == "dot") {size=4
+  shape=16}
+  
+  p = VlnPlot(seuratObj, features=gene, pt.size = 0.1, cols=colors) 
+  p$layers[[2]]$aes_params$alpha = 0.2
+  p = p + theme(axis.title.x = element_blank()) +
+    stat_summary(fun.y = funct, geom='point', size = size, colour = color,shape = shape)+
+    NoLegend()
+  return(p)
+}
+
+VlnPlot2 = function(seuratObj, genes, shape="line", funct=mean,color="black",colors=NULL){
+  library(Seurat)
+  library(gridExtra)
+  library(ggplot2)
+  
+  if (shape == "line") {size=25
+  shape=95}
+  if (shape == "dot") {size=4
+  shape=16}
+  plots = vector(mode = "list", length = length(genes))
+  for (i in 1:length(genes)){
+    gene = genes[i]
+    p = VlnPlot(seuratObj, features=gene, pt.size = 0.1, cols=colors) 
+    p$layers[[2]]$aes_params$alpha = 0.2
+    p = p + theme(axis.title.x = element_blank()) +
+      stat_summary(fun.y = funct, geom='point', size = size, colour = color,shape = shape)+
+      NoLegend()    
+    if (i>1){p = p + theme(axis.title.y = element_blank())}
+    plots[[i]] = p
+  }
+  nRow = floor(sqrt(length(plots)))
+  combined = do.call("grid.arrange", c(plots, nrow=nRow))
+  return(combined)
+}
 ########### Enricher + GSEA ##################
 # tutorial at: https://www.youtube.com/watch?v=Bzu4_yDcBLY&t=428s&ab_channel=KimDill-McFarland 
-Enricher <- function(gene_list, geneset="hallmark",organism="Mus musculus", log2fc_threshold=2, qval_threshold=0.05) {
+Enricher = function(gene_list, geneset="hallmark",organism="Mus musculus", log2fc_threshold=2, qval_threshold=0.05) {
   #' get enriched pathways based on a list of genes
   #' 
   #' @param gene_list a vector containing genes that are significanly changed between conditions
   #' @param geneset either "hallmark" or "KEGG", for more check ?msigdbr
   #' @param organism either "Mus musculus" or "Homo sapiens"
   #' @return Returns a dataframe with all relevent results. enriched in Hallmark gene sets (FDR < 0.05)
+  library(msigdbr)
+  library(clusterProfiler)
+  library(fgsea)
+  library(dplyr)
   
   if (geneset=="hallmark"){
     hallmark = msigdbr(species=organism,category="H" )
@@ -174,7 +217,7 @@ Enricher <- function(gene_list, geneset="hallmark",organism="Mus musculus", log2
   return(enrich.hallmark)
 }
 
-plot_Enricher <- function(enrich.hallmark, qval_color="red",title="") {
+plot_Enricher = function(enrich.hallmark, qval_color="red",title="") {
   ggplot(enrich.hallmark,aes(x=reorder(Description, k.K), y=k.K,fill=log10qval)) +
     geom_col() +
     theme_classic() +
@@ -184,7 +227,7 @@ plot_Enricher <- function(enrich.hallmark, qval_color="red",title="") {
     guides(fill=guide_legend(title="-log(Qval)",reverse=T))
 }
 
-GSEA_function <- function(gene_list,log2fc_ratio, geneset="hallmark",
+GSEA_function = function(gene_list,log2fc_ratio, geneset="hallmark",
                           organism="Mus musculus",score_type="std", qval_threshold=1,
                           nperm=1000) {
   # https://bioinformatics-core-shared-training.github.io/RNAseq_May_2020_remote/html/06_Gene_set_testing.html
@@ -200,6 +243,11 @@ GSEA_function <- function(gene_list,log2fc_ratio, geneset="hallmark",
   #' @param organism either "Mus musculus" or "Homo sapiens"
   #' @param changes 
   #' @return Returns a dataframe with all relevent results. enriched in  gene set
+  library(msigdbr)
+  library(fgsea)
+  library(clusterProfiler)
+  library(dplyr)
+
   if (geneset=="hallmark"){
     hallmark = msigdbr(species=organism,category="H" )
     GENESET = "HALLMARK_"
@@ -234,7 +282,6 @@ GSEA_function <- function(gene_list,log2fc_ratio, geneset="hallmark",
     mutate(pathway = gsub(GENESET,"", pathway),
            pathway = gsub("_"," ", pathway)) 
   enrich.hallmark$log10qval = -log(enrich.hallmark$padj,10)
-  
   
   enrich.hallmark$num_of_genes = NA
   for (row in 1:nrow(enrich.hallmark)){enrich.hallmark$num_of_genes[row] = length(enrich.hallmark$leadingEdge[row][[1]])}
@@ -323,6 +370,7 @@ export_for_pie = function(genes, values, path="") {
 
 ########### General R ############################
 time_it = function(expr) {
+#' executes the expression, but also measures how much time the execusion took
   start_time = Sys.time()  
   result = eval(expr)  
   end_time = Sys.time()  
@@ -332,6 +380,7 @@ time_it = function(expr) {
 }
 
 remove_duplicated_rows = function(df, column_containing_duplicates) {
+  library(data.table)
   dt = data.table(df)
   dt = unique(dt, by = column_containing_duplicates)
   return (as.data.frame(dt))
@@ -347,6 +396,41 @@ max_duplicated_rows = function(df, column_name) {
   res = df[!duplicated(df[,column_name]), ]
   res$medians = NULL
   return (res)
+}
+
+scatter = function(data, x_var, y_var, gene_var,title="") {
+  #' data - dataframe with at least 3 columns
+  #' x_var,y_var = values to scatter (column names)
+  #' gene_var - the column name that contains the gene names
+  #' title - title for the plot
+  library(ggplot2)
+  library(plotly)
+  library(shiny)
+  
+  # Create ggplot2 scatter plot
+  plot = ggplot(data, aes_string(x = x_var, y = y_var, text = gene_var)) +
+    geom_point() + 
+    ggtitle(title) + 
+    theme_bw()
+  # Convert ggplot2 plot to plotly
+  plotly_plot = ggplotly(plot, tooltip = "text")
+  # Define a Shiny app
+  ui = shinyUI(fluidPage(plotlyOutput("scatter_plot")))
+  server = shinyServer(function(input, output) {
+    output$scatter_plot <- renderPlotly({
+      plotly_plot %>%
+        event_register("plotly_click") %>%
+        onRender("function(el, x) {
+                    el.on('plotly_click', function(d) {
+                      var selectedGene = d.points[0].data.text[d.points[0].pointNumber];
+                      var data = x[0].data;
+                      for (var i = 0; i < data.length; i++) {
+                        if (data[i].text === selectedGene) {
+                          Plotly.restyle(el.id, 'marker.color', 'rgba(255, 0, 0, 0.8)', [i]);
+                        } else {
+                          Plotly.restyle(el.id, 'marker.color', 'rgba(31, 119, 180, 0.8)', [i]);}} });}")})})
+  # Run the Shiny app
+  shinyApp(ui = ui, server = server)
 }
 
 ########### intestinal plots and markers ############################
@@ -381,6 +465,8 @@ plot_roy_marker = function(expression_mat, genes, celltypes=NA) {
   #' @param expression_mat signature matrix (rows are genes, columns are celltypes)
   #' @param genes vector of gene names
   #' @param celltypes vector of gene celltypes which would be highlighted by color
+  library(ggplot2)
+  
   plots = list()
   expression = expression_mat[genes,]
   expression$gene = rownames(expression)
@@ -423,10 +509,12 @@ plot_roy_inna = function(genes, organism="mouse",celltypes=NA){
   #' #' @param genes gene or genes to plot
   #' #' @param organism "human" or "mouse".
   #' #' @param celltypes vector of gene celltypes which would be highlighted by color
+  library(ggplot2)
+  
   genes = toupper(genes)
   if (organism=="human") {expression = load_human_expression()}
   if (organism=="mouse") {expression = load_mouse_expression()}
-  barplots = plot_marker(expression, genes,celltypes=celltypes)
+  barplots = plot_roy_marker(expression, genes,celltypes=celltypes)
   x = sapply(barplots, function(p, add){return(p+ggtitle(paste(p$lebels$title," (",organism,")",sep="")))}, add=organism)
   for (i in 1:length(barplots)){barplots[[i]] = barplots[[i]] + ggtitle(paste(barplots[[i]]$labels$title," (",organism,")",sep=""))}
   return(barplots)
@@ -443,6 +531,9 @@ find_markers = function(celltypes=NA,organism="human",celltype_name=NA,RATIO_THR
   #' @param EXP_THRESH float. ratio threshold, above which markers will be returned.
   #' @param barplots bool. return a list of barplots for each marker?
   #' @return Returns vector of markers, expression matrix of the markers and plots
+  library(ggplot2)
+  library(ggrepel)
+  
   if (organism=="human") {expression = load_human_expression()}
   if (organism=="mouse") {expression = load_mouse_expression()}
   if (typeof(celltypes)=="logical") {return(colnames(expression))}
@@ -480,15 +571,15 @@ find_markers = function(celltypes=NA,organism="human",celltype_name=NA,RATIO_THR
   celltype_markers = rownames(res)
   
   if (barplots==T) {
-    barplots = plot_marker(expression, celltype_markers, celltypes)
+    barplots = plot_roy_marker(expression, celltype_markers, celltypes)
   }
   
   return (list(markers=celltype_markers,markers_tbl=res,celltypes=celltypes,expression_mat=expression,plot=p, barplots=barplots))
 }
 
-
-# load human intestinal sections data:
 load_segments_human = function(){
+#' loads human intestinal sections data from Rachel Zwick (unpublished)
+  library(readxl)
   if (!exists("human_sections")){
     path = "X:\\Shalevi\\Rachel_Zwick"
     files = c("Enteroendocrine cells.xlsx","Goblet cells.xlsx","Tuft cells.xlsx","Paneth cells.xlsx","Crypt cells.xlsx","Villus cells.xlsx")
@@ -508,9 +599,8 @@ load_segments_human = function(){
   } else {return(human_sections)}
 }
 
-
-# load mouse intestinal sections data:
 load_segments_mouse = function(){
+#' loads mouse intestinal sections data from Rachel Zwick (unpublished)
   if (!exists("mouse_sections")){
     path = "X:\\Shalevi\\Rachel_Zwick/mouse_human_comparison"
     files = c("Mouse Enteroendocrine cells","Mouse Goblet cells","Mouse Tuft cells","Mouse Crypt cells","Mouse Villus cells")
@@ -533,6 +623,7 @@ load_segments_mouse = function(){
 plot_roy_intestinal_sections = function(gene, organism="mouse"){
   #' plots expression along the intestinal segments in human data from Rachel Zwick data
   #' @param gene string, gene to plot
+  library(ggplot2)
   gene = toupper(gene)
   if(organism=="mouse"){
     sections = load_segments_mouse()
@@ -554,8 +645,9 @@ plot_roy_intestinal_sections = function(gene, organism="mouse"){
 }
 
 
-# load Yotams Visium data
+
 load_human_visium = function(){
+  #' loads Yotams Visium data
   if (!exists("human_visium_zonation")){
     human_visium_zonation = read.csv("X:\\roy\\apicome\\visium_export_from_yotam\\Supplementary Table XX zonation.csv")
     human_visium_zonation = human_visium_zonation[grepl("_median|gene_name",colnames(human_visium_zonation))]
@@ -566,6 +658,9 @@ load_human_visium = function(){
 }
 
 plot_roy_zonation = function(gene,organism="mouse"){
+  #' plots expression levels in intestinal enterocytes along the villus axis.
+  #' human is based on Visium data of Yotam, mouse is based on innas data
+  library(ggplot2)
   gene = toupper(gene)
   if(organism=="mouse"){
     expression = load_mouse_expression()
@@ -579,15 +674,17 @@ plot_roy_zonation = function(gene,organism="mouse"){
     plot = zonation[zonation$gene==gene,]
     plot = pivot_longer(plot,colnames(plot)[2:ncol(plot)], names_to="villus_zone", values_to="expression")
     }
-  
   ggplot(data=plot,aes(x=villus_zone,y=expression)) +
     geom_bar(stat="identity",fill="lightgreen",color="black",size=1) +
     theme_bw() + theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
     xlab("") + ggtitle(paste("Villus zone - ",gene,sep="")) + ylab("")
-  
 }
 
 plot_roy_apicome = function(gene,organism="mouse",exp_thresh=1e-8){
+  #' plots the log2(apical/basal) from laser capture samples (median) in tip and base of villi
+  library(ggplot2)
+  library(ggrepel)
+  
   gene = toupper(gene)
   if(organism=="mouse"){apicome = load_mouse_apicome()}
   if (organism=="human"){apicome = load_human_apicome()}
@@ -613,10 +710,11 @@ plot_roy_intestines = function(gene,organism="mouse"){
   #' plots apicome, villus axis, intestinal axis and expression
   #' @param gene string, gene to plot
   #' @param organism "human" or "mouse".
-  p1 = plot_inna(gene,organism=organism)
-  p2 = plot_intestinal_sections(gene,organism=organism)
-  p3 = plot_zonation(gene,organism=organism)
-  p4 = plot_apicome(gene,organism=organism)
+  library(ggpubr)
+  p1 = plot_roy_inna(gene,organism=organism)
+  p2 = plot_roy_intestinal_sections(gene,organism=organism)
+  p3 = plot_roy_zonation(gene,organism=organism)
+  p4 = plot_roy_apicome(gene,organism=organism)
   p = ggarrange(p1[[1]],ggarrange(p2,p3,p4, nrow = 3),ncol = 2) 
   return(p)
 }
@@ -625,13 +723,14 @@ plot_roy_apicome_intestines = function(human_gene,mouse_gene=NA) {
   #' plots the expression in mouse and human intestines, and the apicome log2(a/b) expression
   #' @param human_gene gene to plot
   #' @param mouse_gene in case human and mouse genes are different, put the mouse here
+  library(gridExtra)
   if (typeof(mouse_gene)=="logical") {mouse_gene=human_gene}
   mouse_gene = toupper(mouse_gene)
   human_gene = toupper(human_gene)
-  p1 = plot_inna(mouse_gene,"mouse",celltypes=c("enterocyte_V1","enterocyte_V2","enterocyte_V3","enterocyte_V4","enterocyte_V5","enterocyte_V6"))
-  p2 = plot_inna(human_gene,"human",celltypes="Enterocyte_Epi")
-  p3 = plot_apicome(mouse_gene,organism="mouse") + ggtitle("mouse")
-  p4 = plot_apicome(human_gene,organism="human") + ggtitle("human")
+  p1 = plot_roy_inna(mouse_gene,"mouse",celltypes=c("enterocyte_V1","enterocyte_V2","enterocyte_V3","enterocyte_V4","enterocyte_V5","enterocyte_V6"))
+  p2 = plot_roy_inna(human_gene,"human",celltypes="Enterocyte_Epi")
+  p3 = plot_roy_apicome(mouse_gene,organism="mouse") + ggtitle("mouse")
+  p4 = plot_roy_apicome(human_gene,organism="human") + ggtitle("human")
   plot = grid.arrange(p1[[1]], grid.arrange(p3, p4, nrow=2),p2[[1]],ncol=3,widths=c(4, 2, 4))
   return(invisible(plot))
 }
@@ -640,6 +739,7 @@ plot_roy_apicome_intestines = function(human_gene,mouse_gene=NA) {
 ########### Human protein atlas ############################
 
 load_translation_human = function(){
+  #' loads ENSMBL id and gene symbol
   if (!exists("translation_human")){
     translation_human = read.csv("X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv")
     translation_human = translation_human[!duplicated(translation_human$external_gene_name),c("ensembl_gene_id","external_gene_name")]
@@ -648,16 +748,24 @@ load_translation_human = function(){
 }
 
 human_atlas_image_download = function(gene_name, dir_output,tissue="Small intestine",number_of_images=3){
+  #' downloads IHC images of a selected gene from the human protein atlas
+  #' notice that each protein can have few antibodies, all will be downloaded
+  #' @param gene_name gene to download IHC images
+  #' @param dir_output string of path - where to save the images in? a new folder will be created inside with the gene name
+  #' @param tissue images of which tissue you want to download
+  #' @param number_of_images how many images from each antibody to download? (will randomly be selected)
   library(HPAanalyze)
+  library(utils)
+  gene_name = toupper(gene_name)
   translation_human = load_translation_human()
   gene = translation_human$ensembl_gene_id[translation_human$external_gene_name==gene_name]
-  
-  gene_xml = hpaXmlGet(gene)
+  tryCatch(expr={gene_xml=hpaXmlGet(gene)},error = function(err) {
+    print(paste0("[ERROR] ",err)) 
+    return()})
   antibody = hpaXmlAntibody(gene_xml)
   gene_exp = hpaXmlTissueExpr(gene_xml)
   if(length(gene_exp)==0) return()
   all_images = data.frame()
-  
   for (i in 1:length(gene_exp)){
     cur_ab = gene_exp[[i]]
     cur_ab_1 = cur_ab[cur_ab$tissueDescription1 == "Normal tissue, NOS" &
@@ -665,8 +773,10 @@ human_atlas_image_download = function(gene_name, dir_output,tissue="Small intest
                         (cur_ab$intensity != "Negative" | is.na(cur_ab$intensity)),]
     cur_ab_1 = cur_ab_1[rowSums(is.na(cur_ab_1)) < ncol(cur_ab_1), ]
     
-    if(nrow(cur_ab_1)==0){cur_ab_1 = cur_ab[cur_ab$tissueDescription2 == "Small intestine" &
+    if(nrow(cur_ab_1)==0){ # if no healthy tissue, use diseased
+      cur_ab_1 = cur_ab[cur_ab$tissueDescription2 == "Small intestine" &
                                               (cur_ab$intensity != "Negative" | is.na(cur_ab$intensity)),]}
+    if(nrow(cur_ab_1)==0){return()} # no images of the tissue
     if (nrow(cur_ab_1) > number_of_images){
       cur_ab_1 = sample_n(cur_ab_1,number_of_images)
     }
@@ -676,6 +786,7 @@ human_atlas_image_download = function(gene_name, dir_output,tissue="Small intest
   }
   all_images = all_images[rowSums(is.na(all_images)) < ncol(all_images), ]
   if (nrow(all_images)>0){
+    print(1)
     path = paste0(dir_output,"/",gene_name)
     if (!dir.exists(path)){dir.create(path)} 
     for (i in 1:nrow(all_images)) {
