@@ -56,7 +56,7 @@ scrb_zumi_to_umitable = function(
   if (is.null(input_dir)){input_dir = choose.dir(caption="Choose input directory (zUMI output with dgecounts.rds files)")}
   if (is.null(meta_path)){meta_path = choose.files(caption="Choose metadata excel file",multi=F,filters=matrix(c("Metadata EXCEL", "*.xlsx"),1, 2, byrow = TRUE))}
   if(organism=="mouse"){ensmbl_filepath="X:\\roy\\resources\\Ensemble\\ensemble_entrez_geneId_conversion.csv"
-  } else if (organism=="human"){"X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv"}
+  } else if (organism=="human"){ensmbl_filepath="X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv"}
   meta = read_excel(meta_path,col_types="text")
   ensmbl = read.csv(ensmbl_filepath)
   dge_files = list.files(path = input_dir)
@@ -65,7 +65,7 @@ scrb_zumi_to_umitable = function(
   pools = gsub(".dgecounts.rds","",sapply(strsplit(dge_files, "\\\\"), function(x) tail(x, 1)))
   dataframes = vector("list", length = length(dge_files))
   plots = vector("list", length = length(dge_files)+1) 
-  for (i in 1:length(dge_files)) {
+  for (i in 1:length(dge_files)) { # create dataframes from RDS files, plot barplots of each pool
     file = paste(input_dir,dge_files[i],sep="/")
     df = readRDS(file)
     df = as.data.frame(as.matrix(df$exons$umicounts))
@@ -84,7 +84,7 @@ scrb_zumi_to_umitable = function(
     plots[[i]] = p
     dataframes[[i]] = df
   }
-  for (i in 1:length(dataframes)){
+  for (i in 1:length(dataframes)){ # for each pool, select only relevent barcodes, merge to one final table
     df = dataframes[[i]]
     cur_pool = meta[meta[,pool_col]==pools[i],c(name_col,barcode_col)]
     colnames(cur_pool) = c("name","barcode")
@@ -95,12 +95,12 @@ scrb_zumi_to_umitable = function(
     } else {umi_table = merge(umi_table,results_cur,by="gene",all=T)}
   }
   umi_table[is.na(umi_table)] = 0
-  umi_table = select(umi_table,all_of(meta[[name_col]]))
+  umi_table = select(umi_table,all_of(meta[[name_col]])) # rearrange the order of columns based on metadata
+  
+  # create barplot of samples:
   bar = as.data.frame(colSums(umi_table[,colnames(umi_table)!="gene"]))
   colnames(bar) = "sum_umi"
-  bar$name = rownames(bar)
-  
-  bar$name = factor(bar$name)
+  bar$name = factor(rownames(bar))
   p = ggplot(bar,aes(name,sum_umi)) + 
     geom_bar(stat="identity") + 
     theme_bw() + labs(x="",y="sum reads",title="final_umi_table") +
@@ -108,10 +108,13 @@ scrb_zumi_to_umitable = function(
     theme(legend.position="none") +
     scale_x_discrete(limits = bar$name)
   plots[[length(plots)]] = p
-  rownames(umi_table) = umi_table$gene
-  umi_table$gene = NULL
+  
+  if ('gene' %in% colnames(umi_table)){
+    rownames(umi_table) = umi_table$gene
+    umi_table$gene = NULL
+  }
   umi_table = as.data.frame(lapply(umi_table, as.integer),row.names=rownames(umi_table))
-  if (!is.null(output_dir)){
+  if (!is.null(output_dir)){ # save
     write.csv(umi_table,paste0(output_dir,"/umi_table.csv"))
     write.csv(meta,paste0(output_dir,"/metadata.csv"))
   }
@@ -691,7 +694,7 @@ find_markers = function(signature_matrix,celltypes,RATIO_THRESH=2,EXP_THRESH=10^
   plot$gene = rownames(plot)
   plot[c("chosen_avg","other_max")] = log(plot[c("chosen_avg","other_max")],10)
   p = ggplot(plot,aes(x=chosen_avg, y=other_max,colour=signif)) + geom_point() + 
-    ggtitle(paste("Genes that are unique to ",celltype_name,sep=""))+
+    ggtitle(paste("Genes that are unique to ",celltypes,sep=""))+
     geom_text_repel(plot[plot$signif==T,], mapping=aes(x=chosen_avg, y=other_max,label=gene),max.overlaps = 30)+
     theme_bw() + ylab("log10(max expression in other cells)") + xlab("log10(averege expression in celltype)")+
     theme(legend.position = "none",panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
