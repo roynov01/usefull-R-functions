@@ -18,7 +18,7 @@ ensmbl = function() {
 dgeconts2csv = function(organism) {
   library(dplyr)
   if(organism=="mouse"){ensmbl_filepath="X:\\roy\\resources\\Ensemble\\ensemble_entrez_geneId_conversion.csv"
-  } else if (organism=="human"){"X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv"}
+  } else if (organism=="human"){ensmbl_filepath="X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv"}
   dge_files = choose.files(filters=matrix(c("RDS dgecounts file", "*.rds"),1, 2, byrow = TRUE))
   ensmbl = read.csv(ensmbl_filepath)
   
@@ -95,7 +95,7 @@ scrb_zumi_to_umitable = function(
     } else {umi_table = merge(umi_table,results_cur,by="gene",all=T)}
   }
   umi_table[is.na(umi_table)] = 0
-  umi_table = select(umi_table,all_of(meta[[name_col]])) # rearrange the order of columns based on metadata
+  umi_table = select(umi_table,c('gene',all_of(meta[[name_col]]))) # rearrange the order of columns based on metadata
   
   # create barplot of samples:
   bar = as.data.frame(colSums(umi_table[,colnames(umi_table)!="gene"]))
