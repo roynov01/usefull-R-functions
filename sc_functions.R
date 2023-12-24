@@ -123,16 +123,7 @@ scrb_zumi_to_umitable = function(
   
 
 
-########### Mat-norm ##########################
-matnorm = function(df) {
-  ind = unlist(lapply(df, is.numeric), use.names = FALSE)  
-  numeric_df = df[,ind]
-  sum_col = unname(colSums(numeric_df,na.rm = T))
-  normilized_df =  as.data.frame(t(t(numeric_df) / sum_col))
-  final_df = data.frame(df[,!ind],normilized_df)
-  colnames(final_df) = c(colnames(df)[!ind],colnames(df)[ind])
-  return (final_df)
-}
+
 
 ########### Seurat #######################
 sc2pseudobulk = function(seurat_object, clusters ="seurat_clusters" ,assay="RNA") {
@@ -236,6 +227,9 @@ VlnPlot1 = function(seuratObj, gene, shape="line", funct=mean,color="black",colo
 }
 
 VlnPlot2 = function(seuratObj, genes, shape="line", funct=mean,color="black",colors=NULL){
+  #' plots a modified violin (with mean/median and transparent points) for multiple genes
+  #' shape - "line" or "dot"
+  #' colors = vector of colors for the violin
   library(Seurat)
   library(gridExtra)
   library(ggplot2)
@@ -459,6 +453,17 @@ export_for_pie = function(genes, values, path="") {
 }
 
 ########### General R ############################
+matnorm = function(df) {
+  #' normilizes a dataframe. each value in a numeric column will be divided by the column sum.
+  ind = unlist(lapply(df, is.numeric), use.names = FALSE)  
+  numeric_df = df[,ind]
+  sum_col = unname(colSums(numeric_df,na.rm = T))
+  normilized_df =  as.data.frame(t(t(numeric_df) / sum_col))
+  final_df = data.frame(df[,!ind],normilized_df)
+  colnames(final_df) = c(colnames(df)[!ind],colnames(df)[ind])
+  return (final_df)
+}
+
 time_it = function(expr) {
 #' executes the expression, but also measures how much time the execusion took
   start_time = Sys.time()  
@@ -528,6 +533,44 @@ scatter = function(data, x_var, y_var, gene_var,title="") {
                           Plotly.restyle(el.id, 'marker.color', 'rgba(31, 119, 180, 0.8)', [i]);}} });}")})})
   # Run the Shiny app
   shinyApp(ui = ui, server = server)
+}
+
+pca = function(df, first_pc=1) {
+  #' creates a PCA of a dataframe. rownames are genes, colnames are samples.
+  #' first_pc = will show the required PC, and +1 from it
+  library(ggplot2)
+  library(ggrepel)
+  if (first_pc >= ncol(df)){stop(paste0("no PC ",first_pc+1," possible in a data of ",ncol(df)," samples"))}
+  
+  genes_sum_expression = rowSums(df)
+  df_filtered = df[genes_sum_expression>0,]
+  pca_result = prcomp(t(df_filtered),center=T,scale.=T)
+  pca_data = data.frame(pca_result$x)
+  pca_data$sample = rownames(pca_data)
+  var_explained = pca_result$sdev^2
+  var_explained = var_explained / sum(var_explained)
+  elbow_data = data.frame(PC = 1:length(var_explained), Variance = var_explained)
+
+  x = paste0("PC",first_pc)
+  y = paste0("PC",first_pc+1)
+  xlab = paste(paste0("PC ",first_pc," (",signif(var_explained[first_pc]*100,3),"%)"))
+  ylab = paste(paste0("PC ",first_pc+1," (",signif(var_explained[first_pc+1]*100,3),"%)"))
+  pca_plot = ggplot(pca_data, aes(x=!!sym(x),y=!!sym(y))) +
+    geom_point(color="blue", size=3) +
+    geom_text_repel(aes(label=sample)) +
+    theme(panel.grid=element_blank()) + 
+    theme_bw() +
+    xlab(xlab) +
+    ylab(ylab) +
+    ggtitle("PCA")
+  elbow_plot = ggplot(elbow_data, aes(x=PC, y=Variance)) +
+    geom_point() +
+    theme_bw() +
+    geom_line() +
+    xlab("Principal Component") +
+    ylab("Proportion of Variance Explained") +
+    ggtitle("Elbow Plot")
+  return(list(pca_plot=pca_plot, elbow_plot=elbow_plot, pca_df=pca_data, variance=elbow_data))
 }
 
 ########### intestinal plots and markers ############################
