@@ -1,4 +1,6 @@
-# usefull functions (R):
+
+
+## usefull functions (R):
 * Biology specific:
   + ENSMBL API
   + DGECOUNTS to CSV and zUMI to count-matrix
