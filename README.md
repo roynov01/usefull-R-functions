@@ -16,7 +16,7 @@
   + size_of
   + remove/averege/max duplicated rows
   + gname (interactive scatterplot with labels)
-  + PCA
+  + PCA (+kmeans)
 * plots (require datasets)
   
   
