@@ -35,7 +35,7 @@ dgeconts2csv = function(organism) {
 
 scrb_zumi_to_umitable = function(
   input_dir = NULL,
-  meta_path = NULL,
+  meta_file_path = NULL,
   output_dir = NULL,
   organism = "mouse",
   name_col = "Sample_name",
@@ -44,7 +44,7 @@ scrb_zumi_to_umitable = function(
 ){
   #' get umi_table from zUMI output (dgecounts.rds)
   #' @param input_dir folder containing X.dgecounts.rds, or NULL to get filedialog
-  #' @param meta_path name of seurat metadata that contains the cluster identity
+  #' @param meta_file_path excel file that contains the metadata
   #' @param output_dir optional, where to save the umi table
   #' @param organism human or mouse
   #' @param name_col,pool_col,barcode_col how are the columns in the metadata called (sample name, pool name, barcode)
@@ -54,15 +54,16 @@ scrb_zumi_to_umitable = function(
   library(tidyr)
   library(ggplot2)
   if (is.null(input_dir)){input_dir = choose.dir(caption="Choose input directory (zUMI output with dgecounts.rds files)")}
-  if (is.null(meta_path)){meta_path = choose.files(caption="Choose metadata excel file",multi=F,filters=matrix(c("Metadata EXCEL", "*.xlsx"),1, 2, byrow = TRUE))}
+  if (is.null(meta_file_path)){meta_path = choose.files(caption="Choose metadata excel file",multi=F,filters=matrix(c("Metadata EXCEL", "*.xlsx"),1, 2, byrow = TRUE))}
   if(organism=="mouse"){ensmbl_filepath="X:\\roy\\resources\\Ensemble\\ensemble_entrez_geneId_conversion.csv"
   } else if (organism=="human"){ensmbl_filepath="X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv"}
   meta = read_excel(meta_path,col_types="text")
   ensmbl = read.csv(ensmbl_filepath)
   dge_files = list.files(path = input_dir)
   dge_files = dge_files[grepl(".dgecounts.rds$",dge_files)]
-  
   pools = gsub(".dgecounts.rds","",sapply(strsplit(dge_files, "\\\\"), function(x) tail(x, 1)))
+  print(paste0("pools from filenames: ", paste(pools,collapse=",")))
+  print(paste0("pools from metadata: ", paste(unique(meta[,pool_col]),collapse=",")))
   dataframes = vector("list", length = length(dge_files))
   plots = vector("list", length = length(dge_files)+1) 
   for (i in 1:length(dge_files)) { # create dataframes from RDS files, plot barplots of each pool
@@ -121,9 +122,6 @@ scrb_zumi_to_umitable = function(
   return(list(umi_table=umi_table,plots=plots,meta=meta))
 }
   
-
-
-
 
 ########### Seurat #######################
 sc2pseudobulk = function(seurat_object, clusters ="seurat_clusters" ,assay="RNA") {
@@ -478,7 +476,8 @@ size_of = function(object){
   #' returns size of object, in mb
   size = object.size(object)
   size_mb = size / (1024^2)
-  return (as.integer(size_mb))
+  print(paste0("size is ",round(size_mb,3)," mb"))
+  return (round(as.numeric(size_mb),3))
 }
 
 remove_duplicated_rows = function(df, column_containing_duplicates) {
@@ -535,7 +534,17 @@ scatter = function(data, x_var, y_var, gene_var,title="") {
   shinyApp(ui = ui, server = server)
 }
 
-pca = function(df, first_pc=1) {
+plot_scatter_with_histogramps = function(df, x, y, color,size=5,alpha=0.6) {
+  library(ggExtra)
+  plot_expr = ggplot(df, aes(!!sym(x), !!sym(y), colour=!!sym(color))) +
+    geom_point(size=size, alpha=alpha) + 
+    theme_bw() +
+    theme(legend.position="bottom",panel.grid=element_blank(),legend.box.background = element_rect(colour = "black"),legend.box.margin=margin(3,3,3,3))
+  p = ggMarginal(plot_expr, groupColour = TRUE, groupFill = TRUE)
+  return(p)
+}
+
+pca = function(df, first_pc=1, k_means=NULL) {
   #' creates a PCA of a dataframe. rownames are genes, colnames are samples.
   #' first_pc = will show the required PC, and +1 from it
   library(ggplot2)
@@ -550,13 +559,21 @@ pca = function(df, first_pc=1) {
   var_explained = pca_result$sdev^2
   var_explained = var_explained / sum(var_explained)
   elbow_data = data.frame(PC = 1:length(var_explained), Variance = var_explained)
+  
+  if (!is.null(k_means)){
+    if (k_means >= nrow(pca_data)){stop("k_means needs to be lower than number of samples")}
+    kmeans_result = kmeans(pca_result$x[, 1:2], centers = k_means)
+    pca_data$cluster = as.factor(kmeans_result$cluster)
+  } else {
+    pca_data$cluster = "1"
+  }
 
   x = paste0("PC",first_pc)
   y = paste0("PC",first_pc+1)
   xlab = paste(paste0("PC ",first_pc," (",signif(var_explained[first_pc]*100,3),"%)"))
   ylab = paste(paste0("PC ",first_pc+1," (",signif(var_explained[first_pc+1]*100,3),"%)"))
   pca_plot = ggplot(pca_data, aes(x=!!sym(x),y=!!sym(y))) +
-    geom_point(color="blue", size=3) +
+    geom_point(aes(color=cluster), size=3) +
     geom_text_repel(aes(label=sample)) +
     theme(panel.grid=element_blank()) + 
     theme_bw() +
@@ -572,6 +589,7 @@ pca = function(df, first_pc=1) {
     ggtitle("Elbow Plot")
   return(list(pca_plot=pca_plot, elbow_plot=elbow_plot, pca_df=pca_data, variance=elbow_data))
 }
+
 
 ########### intestinal plots and markers ############################
 
