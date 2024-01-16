@@ -1,4 +1,4 @@
-# to import this file, add: source("X:\\roy\\resources\\sc_functions.R")
+# to import this file, add: source("X:\\roy\\resources\\Roys_R_functions.R")
 
 ########### convert ENSMBL genes to gene names #############################
 
@@ -507,16 +507,18 @@ scatter = function(data, x_var, y_var, gene_var,title="") {
   library(ggplot2)
   library(plotly)
   library(shiny)
+  library(htmlwidgets)
   
   # Create ggplot2 scatter plot
   plot = ggplot(data, aes_string(x = x_var, y = y_var, text = gene_var)) +
     geom_point() + 
     ggtitle(title) + 
-    theme_bw()
+    theme_bw() +
+    coord_fixed() + coord_fixed(ratio = 1)
   # Convert ggplot2 plot to plotly
   plotly_plot = ggplotly(plot, tooltip = "text")
   # Define a Shiny app
-  ui = shinyUI(fluidPage(plotlyOutput("scatter_plot")))
+  ui = shinyUI(fluidPage(plotlyOutput("scatter_plot",height="95vh")))
   server = shinyServer(function(input, output) {
     output$scatter_plot <- renderPlotly({
       plotly_plot %>%
@@ -544,36 +546,40 @@ plot_scatter_with_histogramps = function(df, x, y, color,size=5,alpha=0.6) {
   return(p)
 }
 
-pca = function(df,k_means=NULL,first_pc=1,title="PCA") {
+pca = function(df,k_means=NULL,first_pc=1,title="PCA",number_of_genes=20) {
   #' creates a PCA of a dataframe. rownames are genes, colnames are samples.
-  #' k_means = how many clusters to make. if NULL - will not cluster
+  #' k_means = how many clusters to make(1<k_means<ncol(df). Will compute silhouette score. if NULL - will not cluster.
   #' first_pc = will show the PC, and +1 from it
+  #' number_of_genes = for variable genes plots
+  #' returns: plots and data (PCA, elbow), and silhouette.
   library(ggplot2)
   library(ggrepel)
+  library(gridExtra)
   
   if (first_pc >= ncol(df)){stop(paste0("no PC ",first_pc+1," possible in a data of ",ncol(df)," samples"))}
   
   genes_sum_expression = rowSums(df)
   df_filtered = df[genes_sum_expression>0,]
   pca_result = prcomp(t(df_filtered),center=T,scale.=T)
+  var_genes=data.frame(pca_result$rotation)
   pca_data = data.frame(pca_result$x)
-  pca_data$sample = rownames(pca_data)
+  
   var_explained = pca_result$sdev^2
   var_explained = var_explained / sum(var_explained)
   elbow_data = data.frame(PC = 1:length(var_explained), Variance = var_explained)
   
-  if (!is.null(k_means) & k_means!=1){
+  if (!is.null(k_means)){
     if (k_means >= nrow(pca_data)){stop("k_means needs to be lower than number of samples")}
     library(cluster)
     kmeans_result = kmeans(pca_result$x[, first_pc:first_pc+1], centers = k_means)
-    pca_data$cluster = as.factor(kmeans_result$cluster)
     dissimilarity_matrix = dist(pca_data)
+    pca_data$cluster = as.factor(kmeans_result$cluster)
     silhouette_scores = silhouette(kmeans_result$cluster, dissimilarity_matrix)
     silhouette_score = summary(silhouette_scores)$avg.width
   } else {
     pca_data$cluster = "1"
   }
-
+  pca_data$sample = rownames(pca_data)
   x = paste0("PC",first_pc)
   y = paste0("PC",first_pc+1)
   xlab = paste(paste0("PC ",first_pc," (",signif(var_explained[first_pc]*100,3),"%)"))
@@ -594,13 +600,37 @@ pca = function(df,k_means=NULL,first_pc=1,title="PCA") {
     xlab("Principal Component") +
     ylab("Proportion of Variance Explained") +
     ggtitle("Elbow Plot")
+  
+  var_genes$gene = rownames(var_genes)
+  df1 = var_genes[order(var_genes[,x]),c("gene",x)]
+  df1 = rbind(head(df1, number_of_genes), tail(df1, number_of_genes))
+  df2 = var_genes[order(var_genes[,y]),c("gene",y)]
+  df2 = rbind(head(df2, number_of_genes), tail(df2, number_of_genes))
+  
+  genes1 = ggplot(df1, aes(x = reorder(gene,!!sym(x)),!!sym(x))) +
+    geom_bar(stat = "identity",fill="blue") +
+    geom_hline(yintercept=0, color="black") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.grid=element_blank()) +
+    xlab("")
+  genes2 = ggplot(df2, aes(x = reorder(gene,!!sym(y)),!!sym(y))) +
+    geom_bar(stat = "identity",fill="blue") +
+    geom_hline(yintercept=0, color="black") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.grid=element_blank()) +
+    xlab("")
+  plot_genes = grid.arrange(genes1,genes2,ncol=1)
+  
   if (!is.null(k_means)){
     lab = paste0("Silhouette mean score: ",as.character(round(silhouette_score,2)))
     pca_plot = pca_plot + labs(subtitle=lab)
-    # pca_plot = pca_plot + annotate("text", x=-Inf, y=Inf, label=lab,hjust = -1, vjust = 2)
-    return(list(pca_plot=pca_plot, elbow_plot=elbow_plot, pca_df=pca_data, variance=elbow_data, silhouette=silhouette_scores))
+    return(list(plot_pca=pca_plot, plot_elbow=elbow_plot, pca_df=pca_data, 
+                variance=elbow_data, silhouette=silhouette_scores, 
+                var_genes=var_genes[,!grepl("gene",colnames(var_genes))],
+                plot_genes=plot_genes))
   }
-  return(list(pca_plot=pca_plot, elbow_plot=elbow_plot, pca_df=pca_data, variance=elbow_data))
+  return(list(plot_pca=pca_plot, plot_elbow=elbow_plot, pca_df=pca_data, variance=elbow_data, 
+              var_genes=var_genes[,!grepl("gene",colnames(var_genes))],plot_genes=plot_genes))
 }
 
 
