@@ -122,6 +122,43 @@ scrb_zumi_to_umitable = function(
   return(list(umi_table=umi_table,plots=plots,meta=meta))
 }
   
+scrb_utap_to_umitable = function(input_dir=NULL,bar=T,pca=T){
+  # accepts UTAP output. if input_dir=NULL, will ask for the "9_umi_counts" folder.
+  # also plots the UMI count and a PCA
+  if (is.null(input_dir)){input_dir = choose.dir(caption="Choose input directory (utap output, folder 9_umi_counts)")}
+  files = list.files(path = input_dir)
+  for (i in 1:length(files)){
+    name = gsub(".deDup_counts.corrected.txt","",files[i])
+    path = paste(input_dir,files[i],sep="/")
+    if (i==1){
+      df = read.csv(path,sep="\t",header=F)
+      colnames(df)[2] = name
+    } else {
+      next_df = read.csv(path,sep="\t",header=F)
+      colnames(next_df)[2] = name
+      df = merge(df, next_df,by="V1",all=T)
+    }
+  }
+  rownames(df) = df$V1
+  df$V1 = NULL
+  if(bar==T){
+    bar = as.data.frame(colSums(df))
+    colnames(bar) = "sum_umi"
+    bar$name = factor(rownames(bar))
+    bar = ggplot(bar,aes(name,sum_umi)) + 
+      geom_bar(stat="identity") + 
+      theme_bw() + labs(x="",y="sum reads",title="umi_table") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      theme(legend.position="none") +
+      scale_x_discrete(limits = bar$name)
+    print(bar)
+  }
+  if (pca==T){
+    pca_plot = pca(matnorm(df))$plot_pca + ggtitle("PCA of matnormilized data") + theme(legend.position="none")
+    print(pca_plot)
+  }
+  return (df)
+}
 
 ########### Seurat #######################
 sc2pseudobulk = function(seurat_object, clusters ="seurat_clusters" ,assay="RNA") {
@@ -240,7 +277,7 @@ VlnPlot2 = function(seuratObj, genes, shape="line", funct=mean,color="black",col
   for (i in 1:length(genes)){
     gene = genes[i]
     p = VlnPlot(seuratObj, features=gene, pt.size = 0.1, cols=colors) 
-    p$layers[[2]]$aes_params$alpha = 0.2
+    p$layers[[2]]$aes_params$alpha = 0
     p = p + theme(axis.title.x = element_blank()) +
       stat_summary(fun.y = funct, geom='point', size = size, colour = color,shape = shape)+
       NoLegend()    
@@ -462,6 +499,31 @@ matnorm = function(df) {
   return (final_df)
 }
 
+merge_quick = function(df_list,by=NULL,all=F,suffixes=c("_x","_y")){
+  # same as "merge", but for a list of dataframes. if by=NULL, will use rownames
+  if (!is.list(df_list) || length(df_list) < 2) {stop("Please provide a list containing at least two data frames.")}
+  if (is.null(by)){
+    by="temp42"
+    df_list = lapply(df_list, function(df) {
+      df$temp42 = rownames(df)
+      return(df)})
+  }
+  merged_df = Reduce(function(x,y) merge(x,y,by=by,all=all,suffixes=suffixes),df_list)
+  if (by=="temp42"){
+    rownames(merged_df) = merged_df$temp42
+    merged_df$temp42 = NULL
+  }
+  return(merged_df)
+}
+  
+  # Use Reduce to iteratively merge data frames in the list by the new rowname column
+  merged_df <- Reduce(function(x, y) merge(x, y, by = "rowname", all = TRUE), df_list)
+  
+  
+  
+  Reduce(function(x, y) merge(x, y, all = TRUE), df_list)
+}
+
 time_it = function(expr) {
 #' executes the expression, but also measures how much time the execusion took
   start_time = Sys.time()  
@@ -554,7 +616,7 @@ pca = function(df,k_means=NULL,first_pc=1,title="PCA",number_of_genes=20) {
   #' returns: plots and data (PCA, elbow), and silhouette.
   library(ggplot2)
   library(ggrepel)
-  library(gridExtra)
+  library(cowplot)
   
   if (first_pc >= ncol(df)){stop(paste0("no PC ",first_pc+1," possible in a data of ",ncol(df)," samples"))}
   
@@ -619,7 +681,7 @@ pca = function(df,k_means=NULL,first_pc=1,title="PCA",number_of_genes=20) {
     theme_bw() + 
     theme(axis.text.x = element_text(angle = 45, hjust = 1), panel.grid=element_blank()) +
     xlab("")
-  plot_genes = grid.arrange(genes1,genes2,ncol=1)
+  plot_genes = plot_grid(genes1,genes2,ncol=1)
   
   if (!is.null(k_means)){
     lab = paste0("Silhouette mean score: ",as.character(round(silhouette_score,2)))
@@ -910,7 +972,7 @@ plot_roy_zonation = function(gene,organism="mouse"){
     plot = pivot_longer(plot,colnames(plot)[2:ncol(plot)], names_to="villus_zone", values_to="expression")
     }
   ggplot(data=plot,aes(x=villus_zone,y=expression)) +
-    geom_bar(stat="identity",fill="lightgreen",color="black",size=1) +
+    geom_bar(stat="identity",fill="lightgreen",color="black",linewidth=1) +
     theme_bw() + theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
     xlab("") + ggtitle(paste("Villus zone - ",gene,sep="")) + ylab("")
 }
