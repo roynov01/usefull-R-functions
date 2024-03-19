@@ -508,21 +508,14 @@ merge_quick = function(df_list,by=NULL,all=F,suffixes=c("_x","_y")){
       df$temp42 = rownames(df)
       return(df)})
   }
-  merged_df = Reduce(function(x,y) merge(x,y,by=by,all=all,suffixes=suffixes),df_list)
+  merged_df = Reduce(function(x,y) {merge(x,y,by=by,all=all,suffixes=suffixes)},df_list)
   if (by=="temp42"){
     rownames(merged_df) = merged_df$temp42
     merged_df$temp42 = NULL
   }
   return(merged_df)
 }
-  
-  # Use Reduce to iteratively merge data frames in the list by the new rowname column
-  merged_df <- Reduce(function(x, y) merge(x, y, by = "rowname", all = TRUE), df_list)
-  
-  
-  
-  Reduce(function(x, y) merge(x, y, all = TRUE), df_list)
-}
+
 
 time_it = function(expr) {
 #' executes the expression, but also measures how much time the execusion took
@@ -934,7 +927,7 @@ plot_roy_intestinal_sections = function(gene, organism="mouse"){
   plot = sections[sections["gene"] == gene,]
   plot = pivot_longer(plot,colnames(plot)[3:ncol(plot)], names_to = "celltype", values_to = "expression")
   ggplot(data=plot,aes(x=section,y=expression,color=celltype)) +
-    geom_line(size=2) +
+    geom_line(linewidth=2) +
     theme_bw() + theme(panel.grid.major=element_blank(),panel.grid.minor=element_blank()) +
     scale_color_manual(values=colors) +
     theme(legend.position="right") + 
@@ -1100,9 +1093,18 @@ load_translation_human = function(){
   #' loads ENSMBL id and gene symbol
   if (!exists("translation_human")){
     translation_human = read.csv("X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv")
-    translation_human = translation_human[!duplicated(translation_human$external_gene_name),c("ensembl_gene_id","external_gene_name")]
+    translation_human = translation_human[!duplicated(translation_human$external_gene_name),]
     translation_human <<- translation_human
   } else {return(translation_human)}
+}
+
+load_translation_mouse = function(){
+  #' loads ENSMBL id and gene symbol
+  if (!exists("translation_mouse")){
+    translation_mouse = read.csv("X:\\roy\\resources\\Ensemble\\mouse_ensemble_conversion.csv")
+    translation_mouse = translation_mouse[!duplicated(translation_mouse$external_gene_name),]
+    translation_mouse <<- translation_mouse
+  } else {return(translation_mouse)}
 }
 
 human_atlas_image_download = function(gene_name, dir_output,tissue="Small intestine",number_of_images=3){
@@ -1176,4 +1178,69 @@ plot_roy_hpa = function(gene){
         theme(legend.pos="none",axis.line = element_line(),panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
         ggtitle(gene)
   return(p)
+}
+
+
+###### kegg #####
+
+kegg_get_genes = function (pathway="hsa04975"){
+  # get gene names of a pathway
+  library(KEGGREST)
+  genes = keggGet(pathway)[[1]]$GENE
+  genes = data.frame(matrix(genes,ncol=2, byrow=TRUE))
+  colnames(genes) = c("id","name")
+  genes = separate(genes, name, c('gene', 'name'),sep=";")
+  return (genes)
+}
+
+kegg_get_pathways = function(partial_name=NA,organism="human",type="pathway"){
+  # get pathway ids of the organism
+  library(KEGGREST)
+  # to get other types: listDatabases()
+  if (organism=="human"){organism="hsa"}
+  if (organism=="mouse"){organism="mmu"}
+  pathways  = keggList("pathway", organism)
+  pathways = data.frame(name=unname(pathways),id=names(pathways))
+  if (is.na(partial_name)){
+    return(pathways)
+  } else {
+    partial_name = toupper(partial_name)
+    upper_pathways = toupper(pathways$name)
+    return(pathways[grepl(partial_name,upper_pathways),])
+  }
+}
+
+kegg_draw_pathway = function(gene_names,values,pathway.id=NULL,organism="human",
+                             colors=c("red","yellow","green"),output_dir=".",
+                             filename="pathview",limit=NULL){
+  # draw the pathway, and color by a value.
+  # data: data.matrix with rownames = entrez_gene_id, and a column with values
+  # pathway id example: "04975"
+  library(pathview)
+  if (organism=="human"){
+    organism="hsa"
+    translation_human = load_translation_human()
+    translation = translation_human
+    }
+  if (organism=="mouse"){
+    organism="mmu"
+    load_translation_mouse()
+    translation = translation_mouse
+    }
+  if (is.null(pathway.id)){stop("\n# # # # # #\nTo find a pathway.id, (for example 04975), use kegg_get_pathways('protein') or other regex\n# # # # # #")}
+  input = data.frame(gene=gene_names,value=values)
+  pathway_data = merge(input[,c("gene","value")],translation[,c("external_gene_name","entrezgene_id")],by.y="external_gene_name",by.x="gene")
+  pathway_data = pathway_data[!is.na(pathway_data$entrezgene_id),]
+  pathway_data$entrezgene_id = as.character(pathway_data$entrezgene_id)
+  rownames(pathway_data) = pathway_data$entrezgene_id
+  if (is.null(limit)){
+    current_genes = kegg_get_genes(paste0(organism,pathway.id))$gene
+    current_genes = pathway_data[pathway_data$gene %in% current_genes,]
+    limit=list(gene=c(min(current_genes$value),max(current_genes$value)),cpd=1)
+  } else (limit=list(gene=limit,cpd=1))
+  pathway_data = data.matrix(pathway_data[,c("value","gene")])
+  pathview(gene.data=pathway_data[,1],pathway.id=pathway.id,species=organism,kegg.native=T,
+           low=list(gene=colors[1],cpd="black"),mid=list(gene=colors[2],cpd="black"),high =list(gene=colors[3],cpd="black"),
+           out.suffix=filename,kegg.dir=output_dir,limit=limit)
+  return(current_genes)
 }
