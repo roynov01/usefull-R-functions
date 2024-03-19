@@ -11,6 +11,7 @@
       * volcano plot
       * modified Vlnplot
   + Human protein atlas API, download images and plot expression
+  + Pathview - visualize data on KEGG pathways
 * General
   + matnorm
   + merge_quick (for list of dataframes by rownames)
