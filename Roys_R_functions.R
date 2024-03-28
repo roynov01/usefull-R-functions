@@ -1,17 +1,50 @@
 # to import this file, add: source("X:\\roy\\resources\\Roys_R_functions.R")
 
-########### convert ENSMBL genes to gene names #############################
+########### ENSMBL API #############################
 
-ensmbl = function() {
-  # Ensmbl API
-  library(biomaRt)
-  mart = useEnsembl(biomart="ensembl", dataset="mmusculus_gene_ensembl", version=100)
+ensmbl = function(organism="mouse", version=100) {
+  library(biomaRt) # Ensmbl API
+  if (organism=="mouse"){
+    mart = useEnsembl(biomart="ensembl", dataset="mmusculus_gene_ensembl", version=version)
+  } else if (organism=="human"){
+    mart = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl", version=version)
+  }
   # check version in Ensemble archive (GRC38, MM8 etc.)
   attributes = listAttributes(mart)
-  # choose which attributes you want in the table
   gene_ids = getBM(attributes = c("ensembl_gene_id","external_gene_name","entrezgene_id","gene_biotype",
                                   "description"), mart = mart)
   return(gene_ids)
+}
+
+load_translation_human = function(){
+  #' loads ENSMBL id and gene symbol
+  if (!exists("translation_human")){
+    translation_human = read.csv("X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv")
+    translation_human = translation_human[!duplicated(translation_human$external_gene_name),]
+    translation_human <<- translation_human
+  } else {return(translation_human)}
+}
+
+load_translation_mouse = function(){
+  #' loads ENSMBL id and gene symbol
+  if (!exists("translation_mouse")){
+    translation_mouse = read.csv("X:\\roy\\resources\\Ensemble\\mouse_ensemble_conversion.csv")
+    translation_mouse = translation_mouse[!duplicated(translation_mouse$external_gene_name),]
+    translation_mouse <<- translation_mouse
+  } else {return(translation_mouse)}
+}
+
+filter_protein_coding = function(data, organism="human"){
+  if (organism=="human"){
+    load_translation_human()
+    translation = translation_human
+  } else {
+    load_translation_mouse()
+    translation = translation_mouse[,c("external_gene_name","gene_biotype")]
+  }
+  translation = translation[translation$gene_biotype=="protein_coding",]
+  filtered_data = data[rownames(data) %in% translation$external_gene_name,]
+  return (filtered_data)
 }
 
 ########### SCRBseq ###################################
@@ -1089,23 +1122,7 @@ plot_roy_tabula_sapiens = function(gene,organ){
 
 ########### Human protein atlas ############################
 
-load_translation_human = function(){
-  #' loads ENSMBL id and gene symbol
-  if (!exists("translation_human")){
-    translation_human = read.csv("X:\\roy\\resources\\Ensemble\\human_ensemble_conversion.csv")
-    translation_human = translation_human[!duplicated(translation_human$external_gene_name),]
-    translation_human <<- translation_human
-  } else {return(translation_human)}
-}
 
-load_translation_mouse = function(){
-  #' loads ENSMBL id and gene symbol
-  if (!exists("translation_mouse")){
-    translation_mouse = read.csv("X:\\roy\\resources\\Ensemble\\mouse_ensemble_conversion.csv")
-    translation_mouse = translation_mouse[!duplicated(translation_mouse$external_gene_name),]
-    translation_mouse <<- translation_mouse
-  } else {return(translation_mouse)}
-}
 
 human_atlas_image_download = function(gene_name, dir_output,tissue="Small intestine",number_of_images=3){
   #' downloads IHC images of a selected gene from the human protein atlas
